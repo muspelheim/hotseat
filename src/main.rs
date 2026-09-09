@@ -130,6 +130,13 @@ enum ConfigAction {
         #[command(flatten)]
         sel: MonitorSel,
     },
+    /// Remove a peer that no longer exists.
+    ForgetPeer {
+        /// Peer name to drop.
+        name: String,
+        #[command(flatten)]
+        sel: MonitorSel,
+    },
     /// Record whether this machine can reclaim the monitor after giving it away.
     ///
     /// Measure it with `hotseat measure-pull`, then record the answer here.
@@ -356,6 +363,29 @@ fn config_cmd(action: ConfigAction) -> Result<()> {
                 inputs::label(code)
             );
             println!("saved to {}", file.display());
+            Ok(())
+        }
+        ConfigAction::ForgetPeer { name, sel } => {
+            let found = session::find_one(sel.monitor.as_deref())?;
+            let key = found.require_key()?.clone();
+            let mut config = Config::load()?;
+            let entry = config.monitor_entry(&key.value, key.source, &found.label());
+            if entry.forget_peer(&name) {
+                let file = config.save()?;
+                println!("{}: forgot peer {name}", found.label());
+                println!("saved to {}", file.display());
+            } else {
+                let known: Vec<&str> = entry.peers.iter().map(|p| p.name.as_str()).collect();
+                bail!(
+                    "no peer named {name:?} on {}. Known: {}",
+                    found.label(),
+                    if known.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        known.join(", ")
+                    }
+                );
+            }
             Ok(())
         }
         ConfigAction::CanPull { value, sel } => {

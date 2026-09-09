@@ -91,6 +91,16 @@ impl MonitorConfig {
         }
     }
 
+    /// Drop a peer. Returns whether anything was removed.
+    ///
+    /// Config would otherwise be append-only, leaving stale entries that
+    /// `give` will happily resolve to a machine that no longer exists.
+    pub fn forget_peer(&mut self, name: &str) -> bool {
+        let before = self.peers.len();
+        self.peers.retain(|p| !p.name.eq_ignore_ascii_case(name));
+        self.peers.len() != before
+    }
+
     /// Add or update a peer.
     pub fn upsert_peer(&mut self, name: &str, input: u8) {
         match self
@@ -280,6 +290,18 @@ mod tests {
         m.mark_verified(15);
         m.mark_verified(17);
         assert_eq!(m.verified_inputs, vec![15, 17]);
+    }
+
+    #[test]
+    fn forgetting_a_peer_removes_it_case_insensitively() {
+        let mut m = MonitorConfig::new("k".into(), KeySource::Serial, "l".into());
+        m.upsert_peer("win-desktop", 15);
+        m.upsert_peer("linux-pc", 15);
+        assert!(m.forget_peer("WIN-DESKTOP"));
+        assert_eq!(m.peers.len(), 1);
+        assert_eq!(m.peers[0].name, "linux-pc");
+        // Removing something absent must report that, not silently succeed.
+        assert!(!m.forget_peer("nope"));
     }
 
     #[test]
