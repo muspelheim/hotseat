@@ -120,19 +120,53 @@ for candidate in apt-get dnf pacman zypper apk; do
 done
 ok "$DISTRO on $ARCH, package manager: ${PKG:-none found}"
 
-# ------------------------------------------------------- i2c-tools package
+# ---------------------------------------------------------------- packages
 
-step "Installing i2c-tools"
-if command -v i2cdetect >/dev/null 2>&1; then
-    skip "already present"
+# i2c-tools is for diagnosis (`i2cdetect -l`), and is genuinely useful when DDC
+# misbehaves. The rest are build requirements: ddc-hi reaches libudev through
+# ddc-i2c -> i2c-linux -> udev -> libudev-sys, whose build script needs
+# pkg-config and the libudev headers. Without them the build fails with a
+# pkg-config error that says nothing about udev.
+step "Installing packages"
+NEED=""
+command -v i2cdetect >/dev/null 2>&1 || NEED="$NEED i2c-tools"
+if [ "$DO_BUILD" -eq 1 ]; then
+    # Rust needs a C linker. A minimal install may genuinely not have one, and
+    # the failure is `linker \`cc\` not found` from deep inside a build script,
+    # which does not suggest installing a compiler.
+    if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; then
+        case "$PKG" in
+            apt-get) NEED="$NEED build-essential" ;;
+            dnf)     NEED="$NEED gcc" ;;
+            pacman)  NEED="$NEED base-devel" ;;
+            zypper)  NEED="$NEED gcc" ;;
+            apk)     NEED="$NEED build-base" ;;
+        esac
+    fi
+    command -v pkg-config >/dev/null 2>&1 || NEED="$NEED pkg-config"
+    if ! pkg-config --exists libudev 2>/dev/null; then
+        case "$PKG" in
+            apt-get) NEED="$NEED libudev-dev" ;;
+            dnf)     NEED="$NEED systemd-devel" ;;
+            pacman)  NEED="$NEED systemd-libs" ;;
+            zypper)  NEED="$NEED systemd-devel" ;;
+            apk)     NEED="$NEED eudev-dev" ;;
+        esac
+    fi
+fi
+
+# shellcheck disable=SC2086  # NEED is an intentional word-split package list
+if [ -z "$NEED" ]; then
+    skip "all present"
 else
+    ok "need:$NEED"
     case "$PKG" in
-        apt-get) run $SUDO apt-get update -qq && run $SUDO apt-get install -y i2c-tools ;;
-        dnf)     run $SUDO dnf install -y i2c-tools ;;
-        pacman)  run $SUDO pacman -S --needed --noconfirm i2c-tools ;;
-        zypper)  run $SUDO zypper install -y i2c-tools ;;
-        apk)     run $SUDO apk add i2c-tools ;;
-        *)       warn "install i2c-tools with your package manager, then re-run" ;;
+        apt-get) run $SUDO apt-get update -qq && run $SUDO apt-get install -y $NEED ;;
+        dnf)     run $SUDO dnf install -y $NEED ;;
+        pacman)  run $SUDO pacman -S --needed --noconfirm $NEED ;;
+        zypper)  run $SUDO zypper install -y $NEED ;;
+        apk)     run $SUDO apk add $NEED ;;
+        *)       warn "install these with your package manager, then re-run:$NEED" ;;
     esac
     did "installed"
 fi
@@ -220,6 +254,19 @@ if [ "$DO_BUILD" -eq 1 ]; then
     fi
 
     step "Building hotseat"
+    if [ "$DRY_RUN" -eq 0 ] \
+        && ! command -v cc >/dev/null 2>&1 \
+        && ! command -v gcc >/dev/null 2>&1; then
+        die "no C linker found. Rust needs one, and the failure otherwise
+       surfaces as \`linker \\\`cc\\\` not found\` from inside a build script.
+       Install your distro's C toolchain and re-run."
+    fi
+    if [ "$DRY_RUN" -eq 0 ] && ! pkg-config --exists libudev 2>/dev/null; then
+        die "libudev development files are still missing.
+       ddc-hi needs them via ddc-i2c -> i2c-linux -> udev -> libudev-sys, and
+       without them cargo fails with a bare pkg-config error that never
+       mentions udev. Install your distro's libudev headers and re-run."
+    fi
     if [ ! -f Cargo.toml ]; then
         die "no Cargo.toml here. Run this from a clone:
        git clone $REPO_URL && cd hotseat && ./install.sh"

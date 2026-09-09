@@ -58,37 +58,65 @@ jobs:
           NO_COLOR=1 ./install.sh --no-build | tee /tmp/second.log
           grep -q 'skip' /tmp/second.log
 
-  # Static binaries for release. musl so they run on any distro with nothing
-  # installed; ddc-i2c has no C dependencies, so this needs no cross toolchain
-  # beyond musl-tools.
+  # Build inside a CLEAN container, not on the runner.
+  #
+  # This job exists because `test` above passed green while a freshly installed
+  # Ubuntu machine failed outright. GitHub's runner images already ship
+  # pkg-config and libudev-dev, which hid the fact that hotseat needs them:
+  # ddc-hi reaches libudev via ddc-i2c -> i2c-linux -> udev -> libudev-sys, and
+  # the failure is a bare pkg-config error that never mentions udev.
+  #
+  # Only a clean image proves install.sh is sufficient by itself.
+  clean-machine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.sh must succeed unaided on a bare Ubuntu image
+        run: |
+          docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -euc '
+            apt-get update -qq
+            apt-get install -y -qq sudo curl ca-certificates >/dev/null
+            useradd -m -s /bin/bash builder
+            echo "builder ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/builder
+            cp -r /src /home/builder/hotseat
+            chown -R builder /home/builder/hotseat
+            su builder -c "
+              curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs \
+                | sh -s -- -y --no-modify-path --profile minimal >/dev/null
+              export PATH=\$HOME/.cargo/bin:\$PATH
+              cd ~/hotseat && NO_COLOR=1 ./install.sh
+              ~/.local/bin/hotseat --version
+            "
+          '
+
+  # Release binaries for Linux are glibc, not musl.
+  #
+  # An earlier version of this job built static musl binaries and asserted they
+  # had no dynamic dependencies. That was wrong: libudev is a system library
+  # that does not static-link cleanly under musl, and hotseat cannot avoid it,
+  # because ddc-hi enables ddc-i2c's udev-based enumeration unconditionally and
+  # Cargo features are additive, so it cannot be switched off downstream. The
+  # honest position is a dynamically linked build plus a stated requirement.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, installer]
+    needs: [test, installer, clean-machine]
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - name: Install musl tooling
+      - name: Build
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu
-            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-          fi
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-      - name: Confirm it is actually static
+          sudo apt-get install -y pkg-config libudev-dev
+          cargo build --release
+      - name: Record what it actually links against
         run: |
-          file target/${{ matrix.target }}/release/hotseat
-          # A dynamically linked binary here would defeat the point.
-          ! ldd target/${{ matrix.target }}/release/hotseat 2>/dev/null | grep -q '=>'
+          file target/release/hotseat
+          ldd target/release/hotseat
+          # Fail loudly if libudev ever stops being a runtime requirement, so
+          # the docs and the comment above cannot silently go stale.
+          ldd target/release/hotseat | grep -q libudev
       - uses: actions/upload-artifact@v4
         with:
-          name: hotseat-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/hotseat
+          name: hotseat-x86_64-unknown-linux-gnu
+          path: target/release/hotseat

@@ -75,10 +75,16 @@ cable. Three tiers again, because backends differ in what they expose:
 
 ### Linux
 
-DDC on Linux needs the `i2c-dev` module loaded and `/dev/i2c-*` readable by your
-user. Without it hotseat finds no displays at all, and the failure looks
-identical to having no monitor attached. `install.sh` handles that, builds, and
-verifies the result:
+Linux needs two things macOS and Windows do not:
+
+- **`/dev/i2c-*` readable by your user**, with `i2c-dev` available. Without it
+  hotseat finds no displays at all, and the failure looks identical to having no
+  monitor attached.
+- **`pkg-config` and libudev headers** to build. `ddc-hi` reaches libudev via
+  `ddc-i2c` → `i2c-linux` → `udev` → `libudev-sys`, and without them the build
+  dies with a bare pkg-config error that never mentions udev.
+
+`install.sh` handles both, builds, and verifies the result:
 
 ```sh
 git clone https://github.com/muspelheim/hotseat
@@ -200,6 +206,17 @@ status quo, but it is not magic.
   "switched", because DDC cannot tell the difference and this panel accepts
   writes it then ignores.
 - **No mesh yet**, so peers are configured by hand on each machine.
+- **Linux binaries are dynamically linked against libudev**, so they are not
+  drop-anywhere static executables. `ddc-hi` turns on `ddc-i2c`'s udev-based
+  enumeration unconditionally and Cargo features are additive, so it cannot be
+  disabled downstream. Any distro with systemd/udev already has the runtime
+  library.
+- **The same panel can produce different config keys on different machines.**
+  Measured: macOS reported EDID model `0x7180` for the reference monitor while
+  the Linux EDID reports `0x7181`, and macOS exposes no EDID at all so it falls
+  back to the serial tier. The serial agrees across both. Harmless today, since
+  config is per-machine, but the M3 mesh will have to match panels on the serial
+  rather than on the whole key.
 
 ## Roadmap
 
