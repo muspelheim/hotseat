@@ -420,9 +420,19 @@ verify() {
 next_steps() {
     printf '\n'
     if [ "$OS" = "linux" ] && [ "$IN_GROUP" -eq 0 ]; then
-        printf '%sOne more step:%s group membership does not apply to shells that were\n' "$C_WARN" "$C_OFF"
-        printf 'already open. Start a fresh session, or run:\n\n'
-        printf '    newgrp i2c\n\n'
+        printf '%sOne more step:%s group membership applies only to sessions started\n' "$C_WARN" "$C_OFF"
+        printf 'after it was granted, so this shell cannot see it yet. Do one of:\n\n'
+        # newgrp and sg are not on every distro: Ubuntu 26.04 ships neither, and
+        # telling someone to run a command that does not exist is worse than
+        # saying nothing. Only offer what is actually present.
+        if command -v newgrp >/dev/null 2>&1; then
+            printf '    newgrp i2c            # same shell, new group\n'
+        fi
+        if command -v su >/dev/null 2>&1; then
+            # shellcheck disable=SC2016  # literal text to copy, not to expand
+            printf '    exec su - "$USER"     # same shell, fresh group list\n'
+        fi
+        printf '    log out and back in   # always works\n\n'
     fi
     printf 'Then:\n\n'
     printf '    hotseat probe                       # what is attached, and what to believe\n'
