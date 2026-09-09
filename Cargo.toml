@@ -1,0 +1,21 @@
+[package]
+name = "hotseat"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Hand one monitor between the machines on your desk, over DDC/CI"
+repository = "https://github.com/muspelheim/hotseat"
+license = "MIT"
+keywords = ["ddc", "ddc-ci", "monitor", "kvm", "vcp"]
+categories = ["command-line-utilities", "hardware-support"]
+readme = "README.md"
+exclude = ["/.github"]
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+ddc-hi = "0.4.1"
+mccs = "0.1.3"
+mccs-caps = "0.1.3"
+mccs-db = "0.1.3"
+serde = { version = "1.0.229", features = ["derive"] }
