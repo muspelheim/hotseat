@@ -73,13 +73,37 @@ cable. Three tiers again, because backends differ in what they expose:
 
 ## Install
 
-Requires a Rust toolchain.
+### Linux
+
+DDC on Linux needs the `i2c-dev` module loaded and `/dev/i2c-*` readable by your
+user. Without it hotseat finds no displays at all, and the failure looks
+identical to having no monitor attached. `install.sh` handles that, builds, and
+verifies the result:
+
+```sh
+git clone https://github.com/muspelheim/hotseat
+cd hotseat
+./install.sh              # add --dry-run first to see every command it would run
+```
+
+It is idempotent, uses `sudo` only for the steps that need it, refuses to run as
+root, and prints how to undo the privileged parts. Group membership does not
+apply to shells that were already open, so log out and back in — or `newgrp i2c`
+to test immediately.
+
+### macOS
+
+No privileged setup is needed; DDC works out of the box.
 
 ```sh
 git clone https://github.com/muspelheim/hotseat
 cd hotseat
 cargo build --release
 ```
+
+### Windows
+
+As macOS. No setup beyond a Rust toolchain.
 
 ## Use
 
