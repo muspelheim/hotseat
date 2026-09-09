@@ -36,6 +36,12 @@ pub struct Plan {
     pub target: String,
     /// Value to write.
     pub code: u8,
+    /// How to describe that value to a human.
+    ///
+    /// Taken from the monitor's own config rather than the MCCS table, because
+    /// on a vendor-coded panel the table is wrong: value 5 selects HDMI-1 on
+    /// the reference monitor while MCCS calls it Composite-1.
+    pub input_label: String,
     /// Whether this value has been confirmed to work on this display.
     pub verified: bool,
 }
@@ -49,10 +55,8 @@ impl Plan {
             "UNVERIFIED - if nothing happens, this is the value to suspect"
         };
         format!(
-            "hand monitor to {} by writing {} ({})",
-            self.target,
-            inputs::label(self.code),
-            confidence
+            "hand monitor to {} by writing input {} ({})",
+            self.target, self.input_label, confidence
         )
     }
 }
@@ -92,6 +96,7 @@ pub fn plan_give(monitor: &MonitorConfig, peer_name: &str) -> Result<Plan> {
     Ok(Plan {
         target: peer.name.clone(),
         code: peer.input,
+        input_label: monitor.describe_input(peer.input),
         verified: monitor.verified_inputs.contains(&peer.input),
     })
 }
@@ -121,6 +126,7 @@ pub fn plan_take(monitor: &MonitorConfig) -> Result<Plan> {
     Ok(Plan {
         target: "this machine".into(),
         code,
+        input_label: monitor.describe_input(code),
         verified: monitor.verified_inputs.contains(&code),
     })
 }
@@ -168,6 +174,26 @@ mod tests {
     #[test]
     fn peer_names_are_case_insensitive() {
         assert_eq!(plan_give(&configured(), "WIN-DESKTOP").unwrap().code, 15);
+    }
+
+    #[test]
+    fn plans_describe_inputs_by_machine_not_by_the_mccs_table() {
+        // 5 is Composite-1 to MCCS and HDMI-1 in reality on the reference
+        // panel, so the table name would actively mislead.
+        let mut m = configured();
+        m.own_input = Some(5);
+        m.upsert_peer("linux-pc", 15);
+        assert!(
+            plan_take(&m)
+                .unwrap()
+                .describe()
+                .contains("5 (this machine)"),
+            "{}",
+            plan_take(&m).unwrap().describe()
+        );
+        let g = plan_give(&m, "linux-pc").unwrap().describe();
+        assert!(g.contains("15 (linux-pc)"), "{g}");
+        assert!(!g.contains("Composite"), "{g}");
     }
 
     #[test]
