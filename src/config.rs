@@ -91,6 +91,35 @@ impl MonitorConfig {
         }
     }
 
+    /// Describe a value by what it means on THIS monitor.
+    ///
+    /// The MCCS name is actively misleading on panels using vendor codes: the
+    /// reference monitor selects HDMI-1 with value 5, which MCCS calls
+    /// Composite-1, so hotseat cheerfully reported "this machine is on
+    /// Composite-1". Naming the machine that actually lives on an input is both
+    /// correct and more useful than a standards table that does not apply.
+    pub fn describe_input(&self, code: u8) -> String {
+        if self.own_input == Some(code) {
+            return format!("{code} (this machine)");
+        }
+        if let Some(p) = self.peers.iter().find(|p| p.input == code) {
+            return format!("{code} ({})", p.name);
+        }
+        crate::inputs::label(code)
+    }
+
+    /// Un-record a verified value. Returns whether anything was removed.
+    ///
+    /// Needed because a wrongly recorded "verified" is worse than no record at
+    /// all: it presents a value that provably does nothing as the one thing
+    /// hotseat is most confident about. Reached in practice when MCCS 17 was
+    /// marked verified for a panel that only accepts vendor code 5 for HDMI.
+    pub fn unverify(&mut self, code: u8) -> bool {
+        let before = self.verified_inputs.len();
+        self.verified_inputs.retain(|&c| c != code);
+        self.verified_inputs.len() != before
+    }
+
     /// Drop a peer. Returns whether anything was removed.
     ///
     /// Config would otherwise be append-only, leaving stale entries that
@@ -290,6 +319,29 @@ mod tests {
         m.mark_verified(15);
         m.mark_verified(17);
         assert_eq!(m.verified_inputs, vec![15, 17]);
+    }
+
+    #[test]
+    fn inputs_are_described_by_machine_not_by_a_standards_table() {
+        let mut m = MonitorConfig::new("k".into(), KeySource::Serial, "l".into());
+        m.own_input = Some(5);
+        m.upsert_peer("linux-pc", 15);
+        // 5 is Composite-1 in MCCS but HDMI-1 on this panel, so the table name
+        // would be wrong. The machine name never is.
+        assert_eq!(m.describe_input(5), "5 (this machine)");
+        assert_eq!(m.describe_input(15), "15 (linux-pc)");
+        // Unknown values still fall back to the table rather than nothing.
+        assert!(m.describe_input(18).contains("HDMI-2"));
+    }
+
+    #[test]
+    fn a_wrongly_verified_value_can_be_retracted() {
+        let mut m = MonitorConfig::new("k".into(), KeySource::Serial, "l".into());
+        m.mark_verified(15);
+        m.mark_verified(17);
+        assert!(m.unverify(17));
+        assert_eq!(m.verified_inputs, vec![15]);
+        assert!(!m.unverify(99));
     }
 
     #[test]

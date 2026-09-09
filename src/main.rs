@@ -130,6 +130,13 @@ enum ConfigAction {
         #[command(flatten)]
         sel: MonitorSel,
     },
+    /// Retract a value previously recorded as verified.
+    Unverify {
+        /// VCP 0x60 value to un-record.
+        code: u8,
+        #[command(flatten)]
+        sel: MonitorSel,
+    },
     /// Remove a peer that no longer exists.
     ForgetPeer {
         /// Peer name to drop.
@@ -279,9 +286,17 @@ fn status() -> Result<()> {
             .as_ref()
             .map(|k| k.value.clone())
             .unwrap_or_else(|| "no-key".into());
-        let input = match r.current_input {
-            Some(c) => inputs::label(c),
-            None => "unknown".into(),
+        let stored = r.key.as_ref().and_then(|k| {
+            Config::load()
+                .ok()
+                .and_then(|c| c.monitor(&k.value).cloned())
+        });
+        let input = match (r.current_input, &stored) {
+            // Prefer naming the machine on that input: the MCCS name is wrong
+            // on vendor-coded panels.
+            (Some(c), Some(m)) => m.describe_input(c),
+            (Some(c), None) => inputs::label(c),
+            (None, _) => "unknown".into(),
         };
         let trust = match r.trust {
             ReadTrust::Trusted => "reads ok",
@@ -342,11 +357,7 @@ fn config_cmd(action: ConfigAction) -> Result<()> {
             let entry = config.monitor_entry(&key.value, key.source, &found.label());
             entry.own_input = Some(code);
             let file = config.save()?;
-            println!(
-                "{}: this machine is on {}",
-                found.label(),
-                inputs::label(code)
-            );
+            println!("{}: this machine is on input {code}", found.label());
             println!("saved to {}", file.display());
             Ok(())
         }
@@ -357,13 +368,31 @@ fn config_cmd(action: ConfigAction) -> Result<()> {
             let entry = config.monitor_entry(&key.value, key.source, &found.label());
             entry.upsert_peer(&name, code);
             let file = config.save()?;
-            println!(
-                "{}: peer {name} is on {}",
-                found.label(),
-                inputs::label(code)
-            );
+            println!("{}: peer {name} is on input {code}", found.label());
             println!("saved to {}", file.display());
             Ok(())
+        }
+        ConfigAction::Unverify { code, sel } => {
+            let found = session::find_one(sel.monitor.as_deref())?;
+            let key = found.require_key()?.clone();
+            let mut config = Config::load()?;
+            let entry = config.monitor_entry(&key.value, key.source, &found.label());
+            if entry.unverify(code) {
+                let file = config.save()?;
+                println!(
+                    "{}: {} no longer recorded as verified",
+                    found.label(),
+                    inputs::label(code)
+                );
+                println!("saved to {}", file.display());
+                Ok(())
+            } else {
+                bail!(
+                    "{} was not recorded as verified on {}",
+                    inputs::label(code),
+                    found.label()
+                )
+            }
         }
         ConfigAction::ForgetPeer { name, sel } => {
             let found = session::find_one(sel.monitor.as_deref())?;

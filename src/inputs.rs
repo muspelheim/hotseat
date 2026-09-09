@@ -5,9 +5,15 @@
 //!
 //! **A display's declaration cannot be trusted.** The reference device for this
 //! project, a Samsung Odyssey G52A, declares `60(01 03)` — VGA-1 and DVI-1 — on
-//! a panel whose only physical inputs are one HDMI and one DisplayPort. The two
-//! values verified by hand to actually switch it, `15` and `17`, appear nowhere
-//! in its own declaration. See `tests/fixtures/odyssey-g52a.caps`.
+//! a panel whose only physical inputs are one HDMI and one DisplayPort.
+//!
+//! Its actual, measured write values are `15` for DisplayPort-1 (the MCCS
+//! value) and `5` for HDMI-1 (a vendor value that MCCS calls Composite-1).
+//! MCCS `17`, the standard HDMI-1 code, does nothing at all on it. Neither
+//! working value appears in its own declaration, and one of them is not the
+//! standard code for the input it selects — so a tool that trusted either the
+//! declaration or the standard alone would fail. See
+//! `tests/fixtures/odyssey-g52a.caps`.
 //!
 //! So hotseat never *narrows* to what a display claims. It offers the union of
 //! everything plausible, labelled by how much each value is worth believing,
@@ -206,8 +212,11 @@ mod tests {
     #[test]
     fn capabilities_are_a_signal_not_the_truth() {
         // THE regression test for this whole module. The G52A declares only
-        // 01 and 03, but 15 and 17 are the values that actually switch it.
-        // Any change that drops them for this display breaks the product.
+        // 01 and 03, while the values that actually switch it are 15
+        // (DisplayPort-1) and 5 (HDMI-1, a vendor code MCCS calls
+        // Composite-1). Both survive only because candidates are a union of
+        // the standard table with whatever was declared; narrowing to the
+        // declaration would discard both.
         let db = db_from_caps(G52A_CAPS);
         let found = candidates(&db, &[]);
 
@@ -219,6 +228,13 @@ mod tests {
         assert!(
             codes.contains(&0x11),
             "HDMI-1 (17) must survive a display that fails to declare it"
+        );
+        // The value that genuinely selects HDMI on the reference panel. It is
+        // only present because the standard table happens to include 5 under a
+        // different name, which is precisely why the union matters.
+        assert!(
+            codes.contains(&0x05),
+            "vendor HDMI code 5 must survive; it is what actually works"
         );
 
         // What it declared is still surfaced, just labelled as declared.
