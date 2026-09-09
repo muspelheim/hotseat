@@ -63,11 +63,17 @@ impl Vcp for Handle<'_> {
     }
 }
 
-/// A scripted [`Vcp`] for tests: answers reads from a lookup table.
+/// A scripted [`Vcp`] for tests: answers reads from a lookup table and records
+/// every write so switching logic can be asserted without hardware.
 #[cfg(test)]
+#[derive(Default)]
 pub struct FakeVcp {
     /// Values returned per code. A missing code produces an error.
     pub reads: std::collections::BTreeMap<u8, VcpRead>,
+    /// Every `(code, value)` written, in order.
+    pub writes: Vec<(u8, u16)>,
+    /// When set, writes fail with this message instead of being recorded.
+    pub write_error: Option<String>,
 }
 
 #[cfg(test)]
@@ -88,6 +94,7 @@ impl FakeVcp {
                     )
                 })
                 .collect(),
+            ..Default::default()
         }
     }
 
@@ -98,13 +105,20 @@ impl FakeVcp {
                 .iter()
                 .map(|&(c, value, maximum)| (c, VcpRead { value, maximum }))
                 .collect(),
+            ..Default::default()
         }
     }
 
     /// A display that never answers reads at all.
     pub fn silent() -> Self {
+        Self::default()
+    }
+
+    /// A display whose writes fail.
+    pub fn failing_writes(message: &str) -> Self {
         Self {
-            reads: std::collections::BTreeMap::new(),
+            write_error: Some(message.to_owned()),
+            ..Default::default()
         }
     }
 }
@@ -118,7 +132,11 @@ impl Vcp for FakeVcp {
             .ok_or_else(|| anyhow::anyhow!("no reply for code {code:#04x}"))
     }
 
-    fn set(&mut self, _code: u8, _value: u16) -> Result<()> {
+    fn set(&mut self, code: u8, value: u16) -> Result<()> {
+        if let Some(msg) = &self.write_error {
+            anyhow::bail!("{msg}");
+        }
+        self.writes.push((code, value));
         Ok(())
     }
 

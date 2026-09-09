@@ -6,7 +6,8 @@
 //! with a hotkey that silently does nothing.
 
 use crate::inputs::{self, Candidate, Provenance};
-use crate::monitor::MonitorId;
+use crate::monitor::{MonitorId, MonitorKey};
+use crate::platform::Recovery;
 use crate::trust::{ReadSample, ReadTrust};
 use std::fmt::Write as _;
 
@@ -24,6 +25,10 @@ pub struct DisplayReport {
     pub declared_model: Option<String>,
     /// Whether raw EDID bytes were available.
     pub has_edid: bool,
+    /// What identity recovery managed to add beyond what the backend gave.
+    pub recovery: Recovery,
+    /// Best available config key, and which tier produced it.
+    pub key: Option<MonitorKey>,
     /// Length of the capabilities string, or why it could not be fetched.
     pub capabilities: Result<usize, String>,
     /// Raw read results for the trust probe.
@@ -55,22 +60,37 @@ impl DisplayReport {
                 "  declared model {model}  <- from the capabilities string, often a codename"
             );
         }
-        match self.id.key() {
-            Some(key) => {
-                let _ = writeln!(out, "  stable key     {key}");
+        match &self.key {
+            Some(k) if k.source.is_unique_per_panel() => {
+                let _ = writeln!(
+                    out,
+                    "  config key     {}  ({})",
+                    k.value,
+                    k.source.describe()
+                );
+            }
+            Some(k) => {
+                let _ = writeln!(
+                    out,
+                    "  config key     {}  ({} - two identical monitors\n\
+                     \x20                would share this key)",
+                    k.value,
+                    k.source.describe()
+                );
             }
             None => {
                 let _ = writeln!(
                     out,
-                    "  stable key     UNAVAILABLE - this backend exposed no EDID, so config\n\
-                     \x20                cannot be keyed on panel identity yet"
+                    "  config key     UNAVAILABLE - no panel identity and no capabilities\n\
+                     \x20                string, so config has nothing to key on"
                 );
             }
         }
         let _ = writeln!(
             out,
-            "  edid           {}",
-            if self.has_edid { "present" } else { "absent" }
+            "  edid           {}  |  identity: {}",
+            if self.has_edid { "present" } else { "absent" },
+            self.recovery
         );
         match &self.capabilities {
             Ok(len) => {

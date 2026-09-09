@@ -3,8 +3,9 @@
 Hand one monitor between the machines on your desk, by hotkey, without reaching
 for the monitor's buttons.
 
-**Status: early. Milestone 1 only — every command here is read-only and writes
-nothing to your displays.**
+**Status: early but usable. Milestone 2 — discovery, config and switching. No
+daemon and no peer mesh yet, so a hotkey means binding `hotseat give` in the
+hotkey tool you already use.**
 
 ## Why another one of these
 
@@ -15,10 +16,11 @@ of them already suits you, use it.
 They share one assumption, though: that you will tell them which input each
 machine occupies, and that your monitor's input codes are the standard ones. In
 practice both parts can be wrong in ways that are genuinely hard to debug,
-because a DDC write that goes nowhere produces no error.
+because a DDC write that goes nowhere produces no error at all.
 
 hotseat's premise is that **the discovery is the hard part**, so it should be the
-part that gets automated.
+part that gets automated — and that anything it has not actually measured should
+say so.
 
 ## What it discovers
 
@@ -59,6 +61,16 @@ The full string is kept at [`tests/fixtures/odyssey-g52a.caps`](tests/fixtures/o
 and a regression test asserts that `15` and `17` survive it. A monitor that
 misbehaves makes a better fixture than one that behaves.
 
+**Which panel it is talking to, well enough to store settings against.** Config
+is keyed on the monitor, not on a backend handle that changes when you move a
+cable. Three tiers again, because backends differ in what they expose:
+
+| Tier | Key | Notes |
+|---|---|---|
+| `Edid` | `SAM:7180:H4ZT300577` | Vendor, model and serial. Distinguishes two identical panels. |
+| `Serial` | `serial:1129919028` | Serial only. Still one physical panel. |
+| `CapabilitiesFingerprint` | `caps:85944171f73967e8` | FNV-1a of the capabilities string. Works everywhere, including Windows where WinAPI exposes no EDID — but two identical monitors share it, and hotseat says so. |
+
 ## Install
 
 Requires a Rust toolchain.
@@ -71,13 +83,60 @@ cargo build --release
 
 ## Use
 
+Look first. Nothing here writes to a display:
+
 ```sh
-hotseat probe     # full read-only report per display
+hotseat probe     # full report per display
 hotseat status    # one line per display
 hotseat caps      # raw MCCS capabilities string, verbatim
 ```
 
 `hotseat caps` output is the single most useful thing to attach to a bug report.
+
+Then tell it your layout — `hotseat probe` lists the plausible values:
+
+```sh
+hotseat config own-input 17            # this machine is on HDMI-1
+hotseat config peer win-desktop 15     # the PC is on DisplayPort-1
+hotseat config show
+```
+
+Then switch:
+
+```sh
+hotseat give win-desktop               # hand the monitor over
+hotseat give win-desktop --dry-run     # resolve it without writing
+hotseat take                           # reclaim it, where the panel allows
+hotseat set-input 15 --yes             # raw escape hatch
+```
+
+Record what you observe, so hotseat stops guessing:
+
+```sh
+hotseat measure-pull win-desktop --yes # disruptive; reports, does not guess
+hotseat config verified 15             # this value really does switch it
+hotseat config can-pull false          # panel ignores machines it isn't showing
+```
+
+Once `can-pull` is `false`, `hotseat take` refuses with an explanation instead of
+writing a value the panel would silently ignore.
+
+### Binding a hotkey
+
+hotseat has no daemon yet, so bind it in whatever you already run. It generates
+the snippet with the **absolute** path to its own binary:
+
+```sh
+hotseat hotkey win-desktop                      # skhd on macOS
+hotseat hotkey win-desktop --flavour autohotkey # Windows
+hotseat hotkey win-desktop --flavour command    # bare line for any GUI editor
+```
+
+The absolute path is not fussiness. A hand-built version of this setup failed
+silently because a launch agent invoked a bare command name, and launchd's `PATH`
+is only `/usr/bin:/bin:/usr/sbin:/sbin` — no Homebrew, no `~/.local/bin`. The
+hotkey did nothing, with no error anywhere. `hotseat` is verified to run under
+`env -i` with neither `HOME` nor `PATH` set.
 
 ## Platform support
 
@@ -87,10 +146,10 @@ here.
 
 | Platform | DDC | Global hotkey | One-time setup |
 |---|---|---|---|
-| Windows | `ddc-winapi` / `nvapi` | native | none |
-| macOS | `ddc-macos` (IOAVService) | native | Accessibility permission |
-| Linux + X11 | `ddc-i2c` | native | `i2c-dev` loaded, `/dev/i2c-*` readable |
-| Linux + Wayland | `ddc-i2c` | **none** | as X11; bind `hotseat take` in your DE |
+| Windows | `ddc-winapi` / `nvapi` | via AutoHotkey | none |
+| macOS | `ddc-macos` (IOAVService) | via skhd or similar | that tool's Accessibility permission |
+| Linux + X11 | `ddc-i2c` | via your DE | `i2c-dev` loaded, `/dev/i2c-*` readable |
+| Linux + Wayland | `ddc-i2c` | via your DE | as X11 |
 
 **hotseat will not claim zero configuration.** macOS Accessibility is a TCC
 permission whose database is SIP-protected, so no installer can grant it.
@@ -102,27 +161,34 @@ status quo, but it is not magic.
 
 ## Known limitations
 
-- **No EDID on macOS.** `ddc-macos` exposes no EDID fields, so `MonitorId::key`
-  returns `None` there and config cannot yet be keyed on panel identity. Display
-  names fall back to the backend handle, which is fine for showing a human and
-  not fine as a key — two identical monitors would collide. Reading EDID
-  ourselves via IOKit is the fix.
+- **`ddc_macos::Monitor::edid()` returns nothing** on the hardware this was built
+  against, so the `Edid` key tier is unreachable there and the `Serial` tier is
+  used instead. The EDID parser exists and is unit-tested, but is not exercised
+  on that machine.
 - **Enumeration is empty while a display sleeps.** A locked screen or a
   power-saved panel yields zero DDC displays even though the OS still lists the
-  monitor. Callers must distinguish "asleep" from "absent" and retry.
+  monitor. hotseat distinguishes "asleep" from "absent" in its output, but
+  cannot act on a sleeping display.
 - **Read-back and write encodings can differ.** The reference panel reads `0x60`
   back as `5` while accepting `15`/`17` for writes. `hotseat probe` flags this
   when it detects it. Never feed a read-back value straight back as a write.
+- **A successful write is not proof.** `give` reports "write accepted", never
+  "switched", because DDC cannot tell the difference and this panel accepts
+  writes it then ignores.
+- **No mesh yet**, so peers are configured by hand on each machine.
 
 ## Roadmap
 
-- **M1** — read-only discovery. *Current.*
-- **M2** — switching, config persistence, verified input codes, service install.
+- **M1** — read-only discovery. *Done.*
+- **M2** — switching, config persistence, verified input codes, hotkey snippets.
+  *Current.*
 - **M3** — LAN peer mesh over mDNS, so one hotkey works from any machine. This
   exists because of a physical constraint, not for its own sake: many panels
   accept an input change only from the machine currently being displayed, so a
   machine that has handed the monitor away cannot take it back and has to ask.
-- **M4** — hotkeys, Linux polish, packaging.
+  That is the `can_pull = false` case, and it is the norm rather than the
+  exception.
+- **M4** — own hotkey daemon and service installers, Linux polish, packaging.
 
 ## Licence
 
