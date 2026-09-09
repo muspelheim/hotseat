@@ -167,6 +167,8 @@ enum Flavour {
     Skhd,
     Autohotkey,
     Command,
+    /// triggerhappy, an evdev hotkey daemon that works on a bare Linux console.
+    Triggerhappy,
 }
 
 fn main() -> Result<()> {
@@ -596,18 +598,26 @@ fn measure_pull(peer: &str, yes: bool, selector: Option<&str>) -> Result<()> {
 // ------------------------------------------------------------------- hotkey
 
 fn hotkey(peer: &str, flavour: Flavour) -> Result<()> {
-    use hotseat::hotkey::{Flavour as F, give_snippet};
+    use hotseat::hotkey::{Flavour as F, give_snippet_as};
 
     let exe = std::env::current_exe().context("cannot determine this binary's own path")?;
     let flavour = match flavour {
         Flavour::Auto if cfg!(target_os = "macos") => F::Skhd,
         Flavour::Auto if cfg!(target_os = "windows") => F::AutoHotkey,
+        // On Linux, evdev works on a bare console as well as under X11 and
+        // Wayland, so there is a real answer here rather than "ask your DE".
+        Flavour::Auto if cfg!(target_os = "linux") => F::Triggerhappy,
         Flavour::Auto => F::Command,
         Flavour::Skhd => F::Skhd,
         Flavour::Autohotkey => F::AutoHotkey,
         Flavour::Command => F::Command,
+        Flavour::Triggerhappy => F::Triggerhappy,
     };
-    print!("{}", give_snippet(flavour, &exe, peer));
+    // The Linux flavour must know which account to run as: triggerhappy drops
+    // to `nobody` by default, and a command running as nobody can read neither
+    // this user's config nor /dev/i2c-*.
+    let user = std::env::var("USER").unwrap_or_else(|_| "YOUR_USER".into());
+    print!("{}", give_snippet_as(flavour, &exe, peer, &user));
     Ok(())
 }
 
