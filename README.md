@@ -73,43 +73,59 @@ cable. Three tiers again, because backends differ in what they expose:
 
 ## Install
 
-### Linux
+One command, Linux or macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/muspelheim/hotseat/main/install.sh | bash
+```
+
+With options, note the `-s --`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/muspelheim/hotseat/main/install.sh | bash -s -- --dry-run
+```
+
+`--dry-run` prints every command it would run and changes nothing. `--no-build`
+does the system setup only, `--prefix DIR` chooses where the binary goes
+(default `~/.local/bin`), and `--ref REF` pins a git ref.
+
+It detects the platform, installs what is missing, fetches a Rust toolchain if
+you have none, clones the source, builds, installs, and verifies. It is
+idempotent, refuses to run as root, uses `sudo` only where required, and prints
+how to undo the privileged parts. From an existing clone, `./install.sh` does
+the same thing without cloning again.
+
+**It builds from source**, so a first install pulls a toolchain and compiles —
+minutes, not seconds. Prebuilt binaries are an M4 item.
+
+### What it does on Linux, and why
 
 Linux needs two things macOS and Windows do not:
 
-- **`/dev/i2c-*` readable by your user**, with `i2c-dev` available. Without it
-  hotseat finds no displays at all, and the failure looks identical to having no
-  monitor attached.
+- **`/dev/i2c-*` readable by your user**, with `i2c-dev` available. DDC/CI
+  reaches the monitor over the GPU's I2C bus, and those nodes are root-only by
+  default. Without access hotseat finds no displays at all, and the failure
+  looks identical to having no monitor attached.
 - **`pkg-config` and libudev headers** to build. `ddc-hi` reaches libudev via
   `ddc-i2c` → `i2c-linux` → `udev` → `libudev-sys`, and without them the build
   dies with a bare pkg-config error that never mentions udev.
 
-`install.sh` handles both, builds, and verifies the result:
+Group membership does not apply to shells that were already open, so start a
+fresh session afterwards or run `newgrp i2c`.
 
-```sh
-git clone https://github.com/muspelheim/hotseat
-cd hotseat
-./install.sh              # add --dry-run first to see every command it would run
-```
+On macOS none of this applies: DDC needs no privileged setup at all.
 
-It is idempotent, uses `sudo` only for the steps that need it, refuses to run as
-root, and prints how to undo the privileged parts. Group membership does not
-apply to shells that were already open, so log out and back in — or `newgrp i2c`
-to test immediately.
+### Why piping to a shell is safe here
 
-### macOS
+Every statement in `install.sh` lives inside a function, and `main` runs on the
+very last line. A download truncated mid-transfer therefore defines a few
+functions and does nothing — verified by cutting the file at 30%, 60% and 90%,
+where bash refuses to execute any of it. A plain top-to-bottom script would
+instead run whatever prefix happened to arrive, which on a dropped connection
+means a half-configured machine.
 
-No privileged setup is needed; DDC works out of the box.
-
-```sh
-git clone https://github.com/muspelheim/hotseat
-cd hotseat
-cargo build --release
-```
-
-### Windows
-
-As macOS. No setup beyond a Rust toolchain.
+For the same reason it downloads rustup to a file and then runs it, rather than
+piping the network into a shell a second time.
 
 ## Use
 

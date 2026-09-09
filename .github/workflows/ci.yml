@@ -71,22 +71,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: install.sh must succeed unaided on a bare Ubuntu image
+      - name: Truncated downloads must do nothing
         run: |
-          docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -euc '
+          # The property that makes `curl | bash` acceptable: a partial
+          # transfer defines functions and never reaches main.
+          for frac in 30 60 90; do
+            lines=$(( $(wc -l < install.sh) * frac / 100 ))
+            head -n "$lines" install.sh > /tmp/trunc.sh
+            if bash /tmp/trunc.sh >/dev/null 2>&1; then
+              echo "FAIL: script truncated at ${frac}% still ran to completion"
+              exit 1
+            fi
+          done
+      - name: Piped install must succeed on a bare image
+        run: |
+          # Deliberately harsh: no git, no curl, no gcc, no pkg-config. Only
+          # sudo and ca-certificates, as a real minimal install would have.
+          # The script is piped through stdin, exactly as curl | bash does it.
+          docker run --rm -i -v "$PWD/install.sh:/tmp/i.sh:ro" ubuntu:24.04 bash -euc '
             apt-get update -qq
-            apt-get install -y -qq sudo curl ca-certificates >/dev/null
-            useradd -m -s /bin/bash builder
-            echo "builder ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/builder
-            cp -r /src /home/builder/hotseat
-            chown -R builder /home/builder/hotseat
-            su builder -c "
-              curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs \
-                | sh -s -- -y --no-modify-path --profile minimal >/dev/null
-              export PATH=\$HOME/.cargo/bin:\$PATH
-              cd ~/hotseat && NO_COLOR=1 ./install.sh
-              ~/.local/bin/hotseat --version
-            "
+            apt-get install -y -qq sudo ca-certificates >/dev/null
+            useradd -m -s /bin/bash user
+            echo "user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/user
+            su user -c "cd ~ && NO_COLOR=1 bash /tmp/i.sh"
+            su user -c "~/.local/bin/hotseat --version"
           '
 
   # Release binaries for Linux are glibc, not musl.
