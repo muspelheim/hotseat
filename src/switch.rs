@@ -54,6 +54,9 @@ impl Plan {
         } else {
             "UNVERIFIED - if nothing happens, this is the value to suspect"
         };
+        // input_label names the machine on that input rather than using the
+        // MCCS table, which is wrong on vendor-coded panels: value 5 selects
+        // HDMI-1 on the reference monitor while MCCS calls it Composite-1.
         format!(
             "hand monitor to {} by writing input {} ({})",
             self.target, self.input_label, confidence
